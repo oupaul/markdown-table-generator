@@ -1,0 +1,806 @@
+<!DOCTYPE html>
+
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<title>Markdown 表格產生器</title>
+<style>
+    body { font-family: "Segoe UI", sans-serif; padding: 20px; background: #f8f9fa; }
+    h1 { color: #007bff; }
+    select, button, input, textarea { font-size: 1em; margin: 5px; padding: 6px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; background: #fff; }
+    th, td { border: 1px solid #ccc; padding: 6px; text-align: left; }
+    textarea { resize: both; }
+    .btn-group { margin: 20px 0; display: flex; gap: 10px; flex-wrap: wrap; }
+    .output-box { background: #eef; padding: 10px; white-space: pre-wrap; margin-top: 20px; }
+  </style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.9.3/html2pdf.bundle.min.js"></script>
+<script>
+const formConfigs = {
+  "網路資訊": ["網路資訊", "IP", "Subnet", "Gateway", "備註"],
+  "電腦設備": ["電腦名稱", "管理者", "IP", "網址", "TV or Anydesk", "備註"],
+  "網路設備": ["網路設備", "管理者", "IP", "網址", "備註"],
+  "列印設備": ["列印設備", "管理者", "IP", "網址", "備註"],
+  "網路服務": ["網路服務", "帳號", "網址", "備註"],
+  "軟體資產": ["產品名稱", "產品金鑰", "類型", "授權數量", "安裝日", "用戶端", "備註"]
+};
+
+const textareaFields = ["備註", "產品金鑰"];
+let pastedData = [];
+
+function renderForm(data = []) {
+  const formType = document.getElementById('formType').value;
+  const fields = formConfigs[formType];
+  const container = document.getElementById('dataForm');
+
+  let html = `<table id="dataTable">
+      <thead><tr>${fields.map(f => `<th>${f}</th>`).join('')}<th>操作</th></tr></thead><tbody>`;
+
+  if (data.length > 0) {
+    data.forEach(row => {
+      html += `<tr>${fields.map((field, idx) =>
+        textareaFields.includes(field)
+          ? `<td><textarea rows="2">${row[idx] ?? ''}</textarea></td>`
+          : `<td><input type="text" value="${row[idx] ?? ''}"></td>`
+      ).join('')}<td><button onclick="deleteRow(this)">刪除</button></td></tr>`;
+    });
+  } else {
+    html += generateRow(fields);
+  }
+
+  html += `</tbody></table>`;
+  container.innerHTML = html;
+}
+
+function generateRow(fields) {
+  return `<tr>` + fields.map(field =>
+    textareaFields.includes(field)
+      ? `<td><textarea rows="2" placeholder="${field}"></textarea></td>`
+      : `<td><input type="text" placeholder="${field}"></td>`
+  ).join('') + `<td><button onclick="deleteRow(this)">刪除</button></td></tr>`;
+}
+
+function addRow() {
+  const fields = formConfigs[document.getElementById('formType').value];
+  document.querySelector("#dataTable tbody").insertAdjacentHTML('beforeend', generateRow(fields));
+}
+
+function deleteRow(btn) {
+  btn.closest('tr').remove();
+}
+
+function generateManualMarkdown() {
+  const formType = document.getElementById('formType').value;
+  const fields = formConfigs[formType];
+  const rows = document.querySelectorAll("#dataTable tbody tr");
+
+  let markdown = `| ${fields.join(" | ")} |\n`;
+  markdown += `| ${fields.map(() => "---").join(" | ")} |\n`;
+
+  rows.forEach(row => {
+    const values = Array.from(row.querySelectorAll('input, textarea')).map(e => e.value.trim());
+    markdown += `| ${values.join(" | ")} |\n`;
+  });
+
+  document.getElementById('output').textContent = markdown;
+  updatePreview(fields, rows);
+}
+
+function updatePreview(fields, rows) {
+  let html = `<table border="1" cellpadding="6" cellspacing="0" style="background: #fff; margin-top: 20px;"><thead><tr>${fields.map(f => `<th>${f}</th>`).join('')}</tr></thead><tbody>`;
+  rows.forEach(row => {
+    const values = Array.from(row.querySelectorAll('input, textarea')).map(e => e.value.trim());
+    html += `<tr>${values.map(v => `<td>${v}</td>`).join('')}</tr>`;
+  });
+  html += `</tbody></table>`;
+  document.getElementById('previewArea').innerHTML = html;
+}
+
+function clearAll() {
+  renderForm();
+  document.getElementById('output').textContent = '';
+  document.getElementById('previewArea').innerHTML = '';
+  pastedData = [];
+}
+
+// 啟動綁定
+window.addEventListener("load", renderForm);
+</script>
+<style>
+  .styled-button {
+    background-color: #007bff;
+    color: white;
+    padding: 6px 14px;
+    margin: 5px;
+    border: none;
+    border-radius: 5px;
+    font-size: 0.95em;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+  .styled-button:hover {
+    background-color: #0056b3;
+  }
+  .section {
+    background: #f9fbfd;
+    padding: 15px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    margin-bottom: 20px;
+  }
+  h2 {
+    color: #333;
+  }
+  pre.output-box {
+    background: #eef5ff;
+    border: 1px solid #ccd;
+    padding: 10px;
+    border-radius: 5px;
+  }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+function exportMarkdownTextToXLSX() {
+  const md = document.getElementById("mdTableInput").value.trim();
+  if (!md) return alert("請先貼上 Markdown 表格！");
+  const lines = md.split("\n");
+  const sheets = {};
+  let currentTitle = "";
+  let currentRows = [];
+
+  lines.forEach(line => {
+    if (line.startsWith("####")) {
+      if (currentTitle && currentRows.length > 0) {
+        sheets[currentTitle] = currentRows.slice();
+      }
+      currentTitle = line.replace(/^#+\s*/, "").trim().substring(0, 30);
+      currentRows = [];
+    } else if (line.startsWith("|") && line.includes("|")) {
+      const cols = line.split("|").slice(1, -1).map(c => c.trim());
+      currentRows.push(cols);
+    }
+  });
+  if (currentTitle && currentRows.length > 0) {
+    sheets[currentTitle] = currentRows.slice();
+  }
+  if (Object.keys(sheets).length === 0) return alert("未解析到表格內容");
+
+  const wb = XLSX.utils.book_new();
+  Object.entries(sheets).forEach(([name, data]) => {
+    const ws = XLSX.utils.aoa_to_sheet(data);
+    XLSX.utils.book_append_sheet(wb, ws, name);
+  });
+
+  XLSX.writeFile(wb, "markdown-export.xlsx");
+}
+</script>
+</head>
+<body>
+<h1>Markdown 表格產生器</h1>
+<label for="formType">選擇表單類型（手動輸入時使用）：</label>
+<select id="formType" onchange="renderForm()">
+<option value="網路資訊">🌐 網路資訊</option>
+<option value="電腦設備">💻 電腦設備</option>
+<option value="網路設備">📡 網路設備</option>
+<option value="列印設備">🖨️ 列印設備</option>
+<option value="網路服務">🚀 網路服務</option>
+<option value="軟體資產">📚 軟體資產</option>
+</select>
+<div class="btn-group">
+<button onclick="addRow()">➕ 新增一筆（手動）</button>
+<button onclick="triggerImport()">📂 匯入 Excel/JSON</button>
+<button onclick="triggerPaste()">📑 局部 EXCEL 表格資料轉換 md</button>
+<button onclick="generateManualMarkdown()">✍️ 手動輸入轉 Markdown</button>
+<button onclick="copyMarkdown()">📄 複製 Markdown 結果</button>
+<button onclick="downloadMarkdown()">⬇️ 下載 .md</button>
+<button onclick="clearAll()">🧹 重設</button>
+</div>
+<div id="dataForm"></div>
+<h2>Markdown 結果：</h2>
+<pre class="output-box" id="output"></pre>
+<h2>資料表格預覽：</h2>
+<div id="previewArea"></div>
+<!-- 📋 Markdown 表格貼上區 -->
+<h2>📋 貼上 Markdown 表格</h2>
+<textarea id="mdTableInput" placeholder="請貼上 Markdown 表格..." rows="10" style="width: 100%;"></textarea>
+<div style="margin-top:10px;">
+<button onclick="convertMarkdownToTable()">📋 轉換為表格同時自動補齊 | </button>  <button class="styled-button" onclick="exportMarkdownTextToXLSX()">📊 匯出 Excel</button>
+<button onclick="exportMarkdownToPDF()">🖨️ 匯出 PDF</button>
+</div>
+<div style="margin-top:10px;">
+<button onclick="document.getElementById('jsonInput').click()">📥 匯入 JSON</button>
+<input accept=".json" id="jsonInput" onchange="loadFromJSON(event)" style="display:none" type="file"/>
+</div>
+<div id="mdTablePreview" style="margin-top:20px;"></div>
+<!-- 隱藏上傳與貼上元件 -->
+<input accept=".xlsx,.json" id="fileInput" onchange="handleFile(event)" type="file"/>
+<textarea id="pasteArea" placeholder="請直接貼上表格資料，第一列會當標題" style="display:none; width:100%; height:150px; resize:both;"></textarea>
+<div id="pasteStats" style="margin-top:5px; font-size:0.9em; color:#555;"></div>
+<div id="pasteControl" style="display:none; margin:10px 0;">
+<button onclick="processPastedData()">✅ 表格貼上完成，產生 Markdown</button>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+const formConfigs = {
+  "網路資訊": ["網路資訊", "IP", "Subnet", "Gateway", "備註"],
+  "電腦設備": ["電腦名稱", "管理者", "IP", "網址", "TV or Anydesk", "備註"],
+  "網路設備": ["網路設備", "管理者", "IP", "網址", "備註"],
+  "列印設備": ["列印設備", "管理者", "IP", "網址", "備註"],
+  "網路服務": ["網路服務", "帳號", "網址", "備註"],
+  "軟體資產": ["產品名稱", "產品金鑰", "類型", "授權數量", "安裝日", "用戶端", "備註"]
+};
+
+const textareaFields = ["備註", "產品金鑰"];
+let pastedData = [];
+
+function renderForm(data = []) {
+  const formType = document.getElementById('formType').value;
+  const fields = formConfigs[formType];
+  const container = document.getElementById('dataForm');
+
+  let html = `<table id="dataTable">
+      <thead><tr>${fields.map(f => `<th>${f}</th>`).join('')}<th>操作</th></tr></thead><tbody>`;
+
+  if (data.length > 0) {
+    data.forEach(row => {
+      html += `<tr>${fields.map((field, idx) => 
+        textareaFields.includes(field)
+          ? `<td><textarea rows="2">${row[idx] ?? ''}</textarea></td>`
+          : `<td><input type="text" value="${row[idx] ?? ''}"></td>`
+      ).join('')}<td><button onclick="deleteRow(this)">刪除</button></td></tr>`;
+    });
+  } else {
+    html += generateRow(fields);
+  }
+
+  html += `</tbody></table>`;
+  container.innerHTML = html;
+}
+
+function generateRow(fields) {
+  return `<tr>` + fields.map(field => 
+    textareaFields.includes(field)
+      ? `<td><textarea rows="2" placeholder="${field}"></textarea></td>`
+      : `<td><input type="text" placeholder="${field}"></td>`
+  ).join('') + `<td><button onclick="deleteRow(this)">刪除</button></td></tr>`;
+}
+
+function addRow() {
+  const fields = formConfigs[document.getElementById('formType').value];
+  document.querySelector("#dataTable tbody").insertAdjacentHTML('beforeend', generateRow(fields));
+}
+
+function deleteRow(btn) {
+  btn.closest('tr').remove();
+}
+
+function generateManualMarkdown() {
+  const formType = document.getElementById('formType').value;
+  const fields = formConfigs[formType];
+  const rows = document.querySelectorAll("#dataTable tbody tr");
+
+  let markdown = `| ${fields.join(" | ")} |\n`;
+  markdown += `| ${fields.map(() => "---").join(" | ")} |\n`;
+
+  rows.forEach(row => {
+    const values = Array.from(row.querySelectorAll('input, textarea')).map(e => e.value.trim());
+    markdown += `| ${values.join(" | ")} |\n`;
+  });
+
+  document.getElementById('output').textContent = markdown;
+  updatePreview(fields, rows);
+}
+
+function copyMarkdown() {
+  const text = document.getElementById('output').textContent;
+  navigator.clipboard.writeText(text).then(() => alert('已複製到剪貼簿！'));
+}
+
+function downloadMarkdown() {
+  const text = document.getElementById('output').textContent;
+  if (!text) return alert("請先產生內容！");
+  const blob = new Blob(["\uFEFF" + text], {type: 'text/markdown;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = "table.md";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadCSV() {
+  if (!pastedData.length) return alert('目前只有手動資料');
+  const csv = pastedData.map(row => row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(",")).join("\n");
+  const blob = new Blob(["\uFEFF" + csv], {type: 'text/csv;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = "table.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function clearAll() {
+  renderForm();
+  document.getElementById('output').textContent = '';
+  document.getElementById('previewArea').innerHTML = '';
+  pastedData = [];
+}
+
+function triggerPaste() {
+  document.getElementById('pasteArea').style.display = "block";
+  document.getElementById('pasteArea').value = '';
+  document.getElementById('pasteStats').innerHTML = '';
+  document.getElementById('pasteControl').style.display = "block";
+  document.getElementById('pasteArea').focus();
+}
+
+function handlePaste() {
+  const pasteArea = document.getElementById('pasteArea');
+  const statsArea = document.getElementById('pasteStats');
+  const raw = pasteArea.value.trim();
+  if (!raw) {
+    statsArea.innerHTML = '';
+    return;
+  }
+  const lines = raw.split('\n').filter(line => line.trim() !== "");
+  if (lines.length === 0) {
+    statsArea.innerHTML = '';
+    return;
+  }
+  const lineHeight = 24;
+  const minHeight = 150;
+  const maxHeight = 600;
+  pasteArea.style.height = Math.min(maxHeight, Math.max(minHeight, lines.length * lineHeight)) + "px";
+
+  const firstRowCells = lines[0].split(/\t|\s{2,}/).filter(cell => cell !== "");
+  statsArea.innerHTML = `偵測到 ${lines.length} 列，${firstRowCells.length} 欄`;
+}
+
+function processPastedData() {
+  const pasteArea = document.getElementById('pasteArea');
+  const statsArea = document.getElementById('pasteStats');
+  const controlArea = document.getElementById('pasteControl');
+
+  const raw = pasteArea.value.trim();
+  if (!raw) return alert("請先貼上資料！");
+
+  const lines = raw.split('\n').map(line => line.split(/\t|\s{2,}/).map(cell => cell.trim()));
+  pastedData = lines;
+
+  generatePastedMarkdown();
+
+  pasteArea.style.display = "none";
+  statsArea.innerHTML = '';
+  controlArea.style.display = "none";
+}
+
+function generatePastedMarkdown() {
+  let markdown = `| ${pastedData[0].join(' | ')} |\n`;
+  markdown += `| ${pastedData[0].map(() => "---").join(' | ')} |\n`;
+  pastedData.slice(1).forEach(row => {
+    markdown += `| ${row.join(' | ')} |\n`;
+  });
+
+  document.getElementById('output').textContent = markdown;
+
+  let html = `<table border="1" cellpadding="6" cellspacing="0" style="background:#fff;margin-top:20px;"><thead><tr>${pastedData[0].map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>`;
+  pastedData.slice(1).forEach(row => {
+    html += `<tr>${row.map(c => `<td>${c}</td>`).join('')}</tr>`;
+  });
+  html += `</tbody></table>`;
+
+  document.getElementById('previewArea').innerHTML = html;
+}
+
+function updatePreview(fields, rows) {
+  let html = `<table border="1" cellpadding="6" cellspacing="0" style="background: #fff; margin-top: 20px;"><thead><tr>${fields.map(f => `<th>${f}</th>`).join('')}</tr></thead><tbody>`;
+  rows.forEach(row => {
+    const values = Array.from(row.querySelectorAll('input, textarea')).map(e => e.value.trim());
+    html += `<tr>${values.map(v => `<td>${v}</td>`).join('')}</tr>`;
+  });
+  html += `</tbody></table>`;
+  document.getElementById('previewArea').innerHTML = html;
+}
+
+function triggerImport() {
+  document.getElementById('fileInput').click();
+}
+
+function handleFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+
+  if (file.name.endsWith('.json')) {
+    reader.onload = e => {
+      pastedData = JSON.parse(e.target.result);
+      generatePastedMarkdown();
+    };
+    reader.readAsText(file);
+  } else if (file.name.endsWith('.xlsx')) {
+    reader.onload = e => {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, {type: 'array'});
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      pastedData = XLSX.utils.sheet_to_json(sheet, {header:1});
+      generatePastedMarkdown();
+    };
+    reader.readAsArrayBuffer(file);
+  } else {
+    alert("請上傳 .xlsx 或 .json 檔案！");
+  }
+}
+
+
+function convertMarkdownToTable() {
+  const raw = document.getElementById('mdTableInput').value.trim();
+  if (!raw.startsWith('|')) return alert("請貼上正確的 Markdown 表格格式");
+
+  const lines = raw.split('\n').filter(l => l.trim().startsWith('|'));
+  let data = lines.map(line =>
+    line.trim().split('|').slice(1, -1).map(cell => cell.trim())
+  );
+
+  const colCount = data[0]?.length || 0;
+  data = data.map(row => {
+    while (row.length < colCount) row.push('');
+    return row;
+  });
+
+  window._mdParsedTable = data;
+
+  let html = "<table border='1' style='width:100%; background:#fff'><thead><tr>" +
+    data[0].map(h => `<th>${h}</th>`).join('') + "</tr></thead><tbody>";
+
+  data.slice(2).forEach(row => {
+    html += "<tr>" + row.map(c => `<td>${c}</td>`).join('') + "</tr>";
+  });
+
+  html += "</tbody></table>";
+  document.getElementById('mdTablePreview').innerHTML = html;
+}
+
+function exportMarkdownToCSV() {
+  if (!window._mdParsedTable) return alert("請先轉換 Markdown 表格！");
+  const rows = window._mdParsedTable.slice(2);
+  const csv = [window._mdParsedTable[0], ...rows]
+    .map(r => r.map(cell => `"${cell.replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'markdown-table.csv';
+  a.click();
+}
+
+function exportMarkdownToPDF() {
+  if (!window._mdParsedTable) return alert("請先轉換 Markdown 表格！");
+  const printWindow = window.open('', '', 'width=800,height=600window.addEventListener("load", renderForm);
+</script>
+<script>
+function copyMarkdown() {
+  const text = document.getElementById('output').textContent;
+  navigator.clipboard.writeText(text).then(() => alert('已複製到剪貼簿！'));
+}
+
+function downloadMarkdown() {
+  const text = document.getElementById('output').textContent;
+  if (!text) return alert("請先產生內容！");
+  const blob = new Blob(["\uFEFF" + text], {type: 'text/markdown;charset=utf-8;'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = "table.md";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function downloadCSV() {
+  let data = [];
+  if (window._mdParsedTable) {
+    data = window._mdParsedTable;
+  } else {
+    const table = document.querySelector("#dataTable tbody");
+    if (!table) return alert("沒有資料可匯出！");
+    const rows = table.querySelectorAll("tr");
+    data = [
+      formConfigs[document.getElementById('formType').value],
+      ...Array.from(rows).map(tr =>
+        Array.from(tr.querySelectorAll('input, textarea')).map(td => td.value.trim())
+      )
+    ];
+  }
+
+  const csv = data.map(row =>
+    row.map(cell => `"${cell.replace(/"/g, '""')}"`).join(",")
+  ).join("\n");
+  const blob = new Blob(["\uFEFF" + csv], {type: 'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = "table.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function triggerPaste() {
+  document.getElementById('pasteArea').style.display = "block";
+  document.getElementById('pasteArea').value = '';
+  document.getElementById('pasteStats').innerHTML = '';
+  document.getElementById('pasteControl').style.display = "block";
+  document.getElementById('pasteArea').focus();
+}
+
+function triggerImport() {
+  document.getElementById('fileInput').click();
+}
+</script>
+<script>
+function processPastedData() {
+  const pasteArea = document.getElementById('pasteArea');
+  const statsArea = document.getElementById('pasteStats');
+  const controlArea = document.getElementById('pasteControl');
+
+  const raw = pasteArea.value.trim();
+  if (!raw) return alert("請先貼上資料！");
+
+  const lines = raw.split('\n').filter(line => line.trim() !== '');
+  if (lines.length < 2) return alert("貼上的資料格式不足");
+
+  const parsed = lines.map(line =>
+    line.split(/\t|\s{2,}/).map(cell => cell.trim())
+  );
+
+  // 補空欄位到每列一致長度
+  const colCount = parsed[0].length;
+  const normalized = parsed.map(row => {
+    while (row.length < colCount) row.push('');
+    return row;
+  });
+
+  window._mdParsedTable = normalized;
+
+  // 產生 markdown
+  let md = `| ${normalized[0].join(' | ')} |\n`;
+  md += `| ${normalized[0].map(() => '---').join(' | ')} |\n`;
+  normalized.slice(1).forEach(row => {
+    md += `| ${row.join(' | ')} |\n`;
+  });
+  document.getElementById('output').textContent = md;
+
+  // 產生預覽
+  let html = `<table border="1" cellpadding="6" cellspacing="0" style="background:#fff;margin-top:20px;"><thead><tr>`;
+  html += normalized[0].map(h => `<th>${h}</th>`).join('') + "</tr></thead><tbody>";
+  normalized.slice(1).forEach(row => {
+    html += "<tr>" + row.map(cell => `<td>${cell}</td>`).join('') + "</tr>";
+  });
+  html += "</tbody></table>";
+  document.getElementById('previewArea').innerHTML = html;
+
+  // 關閉貼上區
+  pasteArea.style.display = "none";
+  statsArea.innerHTML = '';
+  controlArea.style.display = "none";
+}
+</script>
+<script>
+function exportMarkdownToPDF() {
+  if (!window._mdParsedTable) return alert("請先轉換 Markdown 表格！");
+  const element = document.getElementById('mdTablePreview');
+
+  const opt = {
+    margin: 10,
+    filename: 'markdown-table.pdf',
+    html2canvas: {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true
+    },
+    jsPDF: {
+      unit: 'mm',
+      format: 'a4',
+      orientation: 'landscape'
+    },
+    pagebreak: {
+      mode: ['avoid-all', 'css', 'legacy']
+    }
+  };
+
+  html2pdf().set(opt).from(element).save();
+}
+</script>
+<script>
+function convertMarkdownToTable() {
+  const raw = document.getElementById('mdTableInput').value.trim();
+  if (!raw) return alert("請貼上有效的 Markdown 資料");
+
+  const lines = raw.split("\n");
+  const groups = [];
+  let currentTitle = null;
+  let currentBlock = [];
+
+  for (const line of lines) {
+    if (line.startsWith("#### ")) {
+      if (currentTitle && currentBlock.length > 0) {
+        groups.push({ title: currentTitle, lines: currentBlock });
+      }
+      currentTitle = line.replace(/^####\s+/, "").trim();
+      currentBlock = [];
+    } else {
+      currentBlock.push(line);
+    }
+  }
+  if (currentTitle && currentBlock.length > 0) {
+    groups.push({ title: currentTitle, lines: currentBlock });
+  }
+
+  let finalMarkdown = "";
+  let previewHTML = "";
+  let flatParsed = [];
+
+  groups.forEach(group => {
+    const content = group.lines.join("\n");
+    const tableLines = content.split("\n").filter(l => l.includes("|"));
+    const rows = tableLines.map(line => {
+      let txt = line.trim();
+      if (!txt.startsWith("|")) txt = "|" + txt;
+      if (!txt.endsWith("|")) txt = txt + "|";
+      const fields = txt.split("|").slice(1, -1).map(cell => cell.trim());
+      const joined = fields.join("").toLowerCase();
+      // 濾掉像是 '---' 的欄位行
+      if (joined.replace(/-/g, "") === "") return null;
+      return fields.every(cell => cell === "") ? null : fields;
+    }).filter(r => r !== null);
+
+    if (rows.length < 2) return; // 必須至少有 header + 一列資料
+
+    const colCount = Math.max(...rows.map(r => r.length));
+    const normalized = rows.map(row => {
+      while (row.length < colCount) row.push("");
+      return row;
+    });
+
+    const header = normalized[0];
+    const dataRows = normalized.slice(1);
+
+    // Markdown 輸出
+    finalMarkdown += `#### ${group.title}\n`;
+    finalMarkdown += `| ${header.join(" | ")} |\n`;
+    finalMarkdown += `| ${header.map(() => "---").join(" | ")} |\n`;
+    dataRows.forEach(row => {
+      finalMarkdown += `| ${row.join(" | ")} |\n`;
+    });
+    finalMarkdown += "\n";
+
+    // 預覽 HTML
+    previewHTML += `<h4>${group.title}</h4>`;
+    previewHTML += "<table border='1' cellpadding='6' cellspacing='0' style='background:#fff;margin-top:10px;'><thead><tr>";
+    previewHTML += header.map(h => `<th>${h}</th>`).join("") + "</tr></thead><tbody>";
+    dataRows.forEach(row => {
+      previewHTML += "<tr>" + row.map(cell => `<td>${cell}</td>`).join("") + "</tr>";
+    });
+    previewHTML += "</tbody></table>";
+
+    flatParsed = flatParsed.concat(dataRows); // 僅記錄資料行，不包含表頭與分隔行
+  });
+
+  window._mdParsedTable = flatParsed;
+  document.getElementById("output").textContent = finalMarkdown;
+  document.getElementById("mdTablePreview").innerHTML = previewHTML;
+}
+</script>
+<script>
+function exportMarkdownToCSV() {
+  if (!window._mdGroupedTables || !Array.isArray(window._mdGroupedTables)) {
+    return alert("請先轉換 Markdown 表格！");
+  }
+  let csv = "";
+  window._mdGroupedTables.forEach(group => {
+    csv += `\n# ${group.title}\n`;
+    csv += group.data.map(row =>
+      row.map(cell => \`"\${cell.replace(/"/g, '""')}"\`).join(",")
+    ).join("\n") + "\n";
+  });
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "markdown-table.csv";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function saveAsJSON() {
+  if (!window._mdGroupedTables || !Array.isArray(window._mdGroupedTables)) {
+    return alert("請先轉換 Markdown 表格！");
+  }
+  const blob = new Blob([JSON.stringify({
+    type: "grouped",
+    data: window._mdGroupedTables
+  }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "table-data.json";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+</script>
+<script>
+function handleFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+
+  if (file.name.endsWith('.json')) {
+    reader.onload = e => {
+      try {
+        const json = JSON.parse(e.target.result);
+        if (json.type === 'grouped' && Array.isArray(json.data)) {
+          window._mdGroupedTables = json.data;
+          const lines = json.data.map(group => {
+            const header = group.data[0];
+            const sep = header.map(() => "---");
+            const rows = group.data.slice(1);
+            let md = `#### ${group.title}\n`;
+            md += `| ${header.join(" | ")} |\n`;
+            md += `| ${sep.join(" | ")} |\n`;
+            md += rows.map(r => `| ${r.join(" | ")} |`).join("\n");
+            return md;
+          }).join("\n\n");
+          document.getElementById("mdTableInput").value = lines;
+          alert("JSON 載入完成，請點『轉換為表格』");
+        } else {
+          alert("不支援的 JSON 格式！");
+        }
+      } catch {
+        alert("JSON 無法解析！");
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  if (file.name.endsWith('.xlsx')) {
+    reader.onload = e => {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: 'array' });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+      if (!rows.length) return alert("Excel 無資料");
+      const headers = rows[0];
+      const sep = headers.map(() => "---");
+      const body = rows.slice(1);
+      let md = `#### Excel 匯入\n`;
+      md += `| ${headers.join(" | ")} |\n`;
+      md += `| ${sep.join(" | ")} |\n`;
+      body.forEach(r => {
+        while (r.length < headers.length) r.push("");
+        md += `| ${r.join(" | ")} |\n`;
+      });
+      document.getElementById("mdTableInput").value = md;
+      alert("Excel 匯入完成，請點『轉換為表格』");
+    };
+    reader.readAsArrayBuffer(file);
+  }
+}
+</script>
+<script>
+function clearAll() {
+  renderForm();
+  document.getElementById('output').textContent = '';
+  document.getElementById('previewArea').innerHTML = '';
+  if (document.getElementById('mdTableInput')) {
+    document.getElementById('mdTableInput').value = '';
+  }
+  if (document.getElementById('mdTablePreview')) {
+    document.getElementById('mdTablePreview').innerHTML = '';
+  }
+  if (document.getElementById('fileInput')) {
+    document.getElementById('fileInput').value = '';
+  }
+  window._mdParsedTable = [];
+  window._mdGroupedTables = [];
+}
+</script>
+</body>
+</html>
+
