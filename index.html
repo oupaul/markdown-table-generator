@@ -195,7 +195,7 @@ function exportMarkdownTextToXLSX() {
 <button onclick="copyMarkdown()">📄 複製 Markdown 結果</button>
 <button onclick="downloadMarkdown()">⬇️ 下載 .md</button>
 <button onclick="clearAll()">🧹 重設</button>
-</div>
+<button onclick="cleanMarkdown()">🧹 自動修正 Markdown 表格</button></div>
 <div id="dataForm"></div>
 <h2>Markdown 結果：</h2>
 <pre class="output-box" id="output"></pre>
@@ -205,7 +205,7 @@ function exportMarkdownTextToXLSX() {
 <h2>📋 貼上 Markdown 表格</h2>
 <textarea id="mdTableInput" placeholder="請貼上 Markdown 表格..." rows="10" style="width: 100%;"></textarea>
 <div style="margin-top:10px;">
-<button onclick="convertMarkdownToTable()">📋 轉換為表格同時自動補齊 | </button>  <button class="styled-button" onclick="exportMarkdownTextToXLSX()">📊 匯出 Excel</button>
+<button onclick="convertMarkdownToTable()">📋 轉換為表格同時自動補齊 | </button> <button class="styled-button" onclick="exportMarkdownTextToXLSX()">📊 匯出 Excel</button>
 <button onclick="exportMarkdownToPDF()">🖨️ 匯出 PDF</button>
 </div>
 <div style="margin-top:10px;">
@@ -801,6 +801,49 @@ function clearAll() {
   window._mdGroupedTables = [];
 }
 </script>
-</body>
-</html>
+<script>
+function cleanMarkdown() {
+  const text = document.getElementById("mdTableInput").value.trim();
+  if (!text.includes("|")) {
+    alert("請先貼上 Markdown 表格資料！");
+    return;
+  }
+  const lines = text.split("\n").filter(l => l.trim() !== "");
+  const tables = [];
+  let block = [];
+  let colCount = 0;
+  for (let line of lines) {
+    if (line.includes("|")) {
+      block.push(line.trim());
+    } else {
+      if (block.length > 1) {
+        tables.push(block);
+        block = [];
+      }
+    }
+  }
+  if (block.length > 1) tables.push(block);
 
+  let output = "";
+  for (let tbl of tables) {
+    const header = tbl[0].split("|").filter(Boolean).map(c => c.trim());
+    colCount = header.length;
+    output += "| " + header.join(" | ") + " |\n";
+    output += "| " + header.map(() => "---").join(" | ") + " |\n";
+
+    for (let i = 2; i < tbl.length; i++) {
+      let row = tbl[i].split("|").filter(Boolean).map(c => c.trim());
+      if (row.length > colCount) {
+        const extra = row.slice(colCount).join(" / ");
+        row = row.slice(0, colCount - 1).concat((row[colCount - 1] || "") + " / " + extra);
+      }
+      while (row.length < colCount) row.push("");
+      output += "| " + row.slice(0, colCount).join(" | ") + " |\n";
+    }
+    output += "\n";
+  }
+  document.getElementById("mdTableInput").value = output.trim();
+  alert("✅ Markdown 表格已修正完成，額外資料已併入備註！");
+}
+</script><div style="margin-top: 40px; font-size: 0.85em; color: #555; border-top: 1px solid #ccc; padding-top: 10px;">© 2025 OU SHOU SHUO — Released under the <a href="https://opensource.org/licenses/MIT" target="_blank">MIT License</a>.</div></body>
+</html>
