@@ -102,6 +102,30 @@ const defaultSchemas = {
 const typeIcons = {
   "網路資訊": "🌐", "電腦設備": "💻", "網路設備": "📡", "列印設備": "🖨️", "網路服務": "🚀", "軟體資產": "📚"
 };
+// 找不到精確對應的類型名稱時，用關鍵字猜一個圖示（依序比對，符合第一個就用）
+const iconKeywords = [
+  [/wan|線路|區域網/i, "🌐"],
+  [/伺服器|server/i, "🖥️"],
+  [/印表|列印|print/i, "🖨️"],
+  [/軟體|授權|license/i, "📚"],
+  [/網域|dns/i, "🔗"],
+  [/vpn|服務/i, "🚀"],
+  [/設備|device/i, "📡"],
+  [/電腦|pc\b/i, "💻"],
+  [/網路|network|ip\b/i, "🌐"]
+];
+
+function iconForTitle(title) {
+  if (typeIcons[title]) return typeIcons[title];
+  const hit = iconKeywords.find(([re]) => re.test(title));
+  return hit ? hit[1] : '📁';
+}
+
+// 去掉標題開頭已經有的圖示，避免「#### 標題」重複轉換時圖示越疊越多
+function stripLeadingIcon(title) {
+  return String(title ?? '').replace(/^\p{Extended_Pictographic}️?\s+/u, '').trim();
+}
+
 let schemas = JSON.parse(JSON.stringify(defaultSchemas));
 
 let pastedData = [];
@@ -112,7 +136,7 @@ function rebuildFormTypeSelect(preferredValue) {
   const select = document.getElementById('formType');
   const previous = preferredValue ?? select.value;
   select.innerHTML = Object.keys(schemas).map(name =>
-    `<option value="${esc(name)}">${typeIcons[name] || '📁'} ${esc(name)}</option>`
+    `<option value="${esc(name)}">${iconForTitle(name)} ${esc(name)}</option>`
   ).join('');
   if (schemas[previous]) select.value = previous;
 }
@@ -391,12 +415,13 @@ function importWorkbookTemplate(event) {
       const rows = sheetToRowsWithLinks(workbook.Sheets[sheetName]);
       if (rows.length === 0) return; // 空白分頁略過
 
+      const title = stripLeadingIcon(sheetName);
       const header = rows[0];
       const dataRows = rows.slice(1);
       const textareaFields = header.filter((h, idx) => dataRows.some(r => (r[idx] || '').length > 25));
 
-      schemas[sheetName] = { fields: header, textareaFields };
-      if (dataRows.length > 0) grouped.push({ title: sheetName, data: [header, ...dataRows] });
+      schemas[title] = { fields: header, textareaFields };
+      if (dataRows.length > 0) grouped.push({ title, data: [header, ...dataRows] });
     });
 
     if (Object.keys(schemas).length === 0) {
@@ -404,7 +429,7 @@ function importWorkbookTemplate(event) {
       return;
     }
 
-    rebuildFormTypeSelect(workbook.SheetNames[0]);
+    rebuildFormTypeSelect(stripLeadingIcon(workbook.SheetNames[0]));
     renderForm();
 
     if (grouped.length > 0) {
@@ -431,14 +456,15 @@ function buildGroupedOutputs(grouped) {
 
   grouped.forEach(group => {
     const [header, ...dataRows] = group.data;
+    const icon = iconForTitle(group.title);
 
-    finalMarkdown += `#### ${group.title}\n`;
+    finalMarkdown += `#### ${icon} ${group.title}\n`;
     finalMarkdown += `| ${header.map(mdCell).join(" | ")} |\n`;
     finalMarkdown += `| ${header.map(() => "---").join(" | ")} |\n`;
     dataRows.forEach(row => { finalMarkdown += `| ${row.map(mdCell).join(" | ")} |\n`; });
     finalMarkdown += "\n";
 
-    previewHTML += `<h4>${esc(group.title)}</h4>`;
+    previewHTML += `<h4>${icon} ${esc(group.title)}</h4>`;
     previewHTML += "<table><thead><tr>" + header.map(h => `<th>${esc(h)}</th>`).join("") + "</tr></thead><tbody>";
     dataRows.forEach(row => {
       previewHTML += "<tr>" + row.map(cell => `<td>${cellPreviewHtml(cell)}</td>`).join("") + "</tr>";
@@ -461,7 +487,7 @@ function convertMarkdownToTable() {
   for (const line of lines) {
     if (line.startsWith("#### ")) {
       if (currentTitle && currentBlock.length > 0) groups.push({ title: currentTitle, lines: currentBlock });
-      currentTitle = line.replace(/^####\s+/, "").trim();
+      currentTitle = stripLeadingIcon(line.replace(/^####\s+/, ""));
       currentBlock = [];
     } else {
       currentBlock.push(line);
