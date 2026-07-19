@@ -127,6 +127,48 @@ function splitCells(line) {
   return line.split(/\t|\s{2,}/).map(cell => cell.trim());
 }
 
+// 讀取工作表所有儲存格；若儲存格帶有超連結（顯示文字與網址不同也一樣），
+// 直接輸出成 Markdown 連結語法 [文字](網址)，而不是只讀顯示文字
+function sheetToRowsWithLinks(sheet) {
+  if (!sheet || !sheet['!ref']) return [];
+  const range = XLSX.utils.decode_range(sheet['!ref']);
+  const rows = [];
+
+  for (let r = range.s.r; r <= range.e.r; r++) {
+    const row = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      row.push(cellToText(sheet[XLSX.utils.encode_cell({ r, c })]));
+    }
+    rows.push(row);
+  }
+
+  return rows.filter(row => row.some(cell => cell !== ''));
+}
+
+function cellToText(cell) {
+  if (!cell) return '';
+  const text = String(cell.w ?? cell.v ?? '').trim();
+  const target = cell.l && cell.l.Target ? cell.l.Target.trim() : '';
+  if (!target) return text;
+  return `[${(text || target).replace(/[[\]]/g, '')}](${target})`;
+}
+
+// Markdown 表格用：跳脫儲存格內的 | 避免拆錯欄位
+function mdCell(value) {
+  return String(value ?? '').replace(/\|/g, '\\|');
+}
+
+const MD_LINK_RE = /^\[([^\]]*)\]\((\S+)\)$/;
+
+// 預覽表格用：若儲存格是 [文字](網址) 格式，還原成真正可點擊的連結
+function cellPreviewHtml(value) {
+  const text = String(value ?? '');
+  const match = text.match(MD_LINK_RE);
+  if (!match) return esc(text);
+  const [, label, url] = match;
+  return `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label || url)}</a>`;
+}
+
 // ---------- 手動輸入表單 ----------
 
 function renderForm(data = []) {
@@ -185,7 +227,7 @@ function generateManualMarkdown() {
 function renderPreviewTable(fields, rows) {
   let html = `<table><thead><tr>${fields.map(f => `<th>${esc(f)}</th>`).join('')}</tr></thead><tbody>`;
   rows.forEach(row => {
-    html += `<tr>${row.map(v => `<td>${esc(v)}</td>`).join('')}</tr>`;
+    html += `<tr>${row.map(v => `<td>${cellPreviewHtml(v)}</td>`).join('')}</tr>`;
   });
   html += `</tbody></table>`;
   document.getElementById('previewArea').innerHTML = html;
@@ -280,9 +322,9 @@ function processPastedData() {
 }
 
 function generatePastedMarkdown() {
-  let markdown = `| ${pastedData[0].join(' | ')} |\n`;
+  let markdown = `| ${pastedData[0].map(mdCell).join(' | ')} |\n`;
   markdown += `| ${pastedData[0].map(() => "---").join(' | ')} |\n`;
-  pastedData.slice(1).forEach(row => { markdown += `| ${row.join(' | ')} |\n`; });
+  pastedData.slice(1).forEach(row => { markdown += `| ${row.map(mdCell).join(' | ')} |\n`; });
 
   document.getElementById('output').textContent = markdown;
   renderPreviewTable(pastedData[0], pastedData.slice(1));
@@ -314,8 +356,7 @@ function handleFile(event) {
     reader.onload = e => {
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, { type: 'array' });
-      const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      pastedData = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+      pastedData = sheetToRowsWithLinks(workbook.Sheets[workbook.SheetNames[0]]);
       generatePastedMarkdown();
     };
     reader.readAsArrayBuffer(file);
@@ -347,9 +388,7 @@ function importWorkbookTemplate(event) {
     const grouped = [];
 
     workbook.SheetNames.forEach(sheetName => {
-      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: false, defval: '' })
-        .map(row => row.map(cell => String(cell ?? '').trim()))
-        .filter(row => row.some(cell => cell !== ''));
+      const rows = sheetToRowsWithLinks(workbook.Sheets[sheetName]);
       if (rows.length === 0) return; // 空白分頁略過
 
       const header = rows[0];
@@ -394,15 +433,15 @@ function buildGroupedOutputs(grouped) {
     const [header, ...dataRows] = group.data;
 
     finalMarkdown += `#### ${group.title}\n`;
-    finalMarkdown += `| ${header.join(" | ")} |\n`;
+    finalMarkdown += `| ${header.map(mdCell).join(" | ")} |\n`;
     finalMarkdown += `| ${header.map(() => "---").join(" | ")} |\n`;
-    dataRows.forEach(row => { finalMarkdown += `| ${row.join(" | ")} |\n`; });
+    dataRows.forEach(row => { finalMarkdown += `| ${row.map(mdCell).join(" | ")} |\n`; });
     finalMarkdown += "\n";
 
     previewHTML += `<h4>${esc(group.title)}</h4>`;
     previewHTML += "<table><thead><tr>" + header.map(h => `<th>${esc(h)}</th>`).join("") + "</tr></thead><tbody>";
     dataRows.forEach(row => {
-      previewHTML += "<tr>" + row.map(cell => `<td>${esc(cell)}</td>`).join("") + "</tr>";
+      previewHTML += "<tr>" + row.map(cell => `<td>${cellPreviewHtml(cell)}</td>`).join("") + "</tr>";
     });
     previewHTML += "</tbody></table>";
   });
